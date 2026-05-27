@@ -1,4 +1,9 @@
-name: NodeJS with Webpack
+
+    - name: Build
+      run: |
+        npm install
+        npx webpack
+        name: NodeJS Build
 
 on:
   push:
@@ -25,4 +30,4 @@ jobs:
     - name: Build
       run: |
         npm install
-        npx webpack
+        npm run build
