@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Alertly</string>
+    <string name="title_activity_main">Alertly</string>
+    <string name="package_name">com.alertly.app</string>
+    <string name="custom_url_scheme">com.alertly.app</string>
+</resources>

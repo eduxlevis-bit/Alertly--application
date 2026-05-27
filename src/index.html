@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Alertly</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="stage">
+      <section class="phone" aria-label="Alertly alarm application">
+        <section class="onboarding" id="onboarding" aria-label="Create Alertly account">
+          <form class="onboarding-card" id="accountForm">
+            <p class="eyebrow">Welcome to Alertly</p>
+            <h2>Create your local account</h2>
+            <p class="small-text">Your details stay on this device and power your dashboard, reminders, and profile.</p>
+
+            <label>
+              Name
+              <input id="accountName" name="name" type="text" autocomplete="name" required>
+            </label>
+
+            <label>
+              Email
+              <input id="accountEmail" name="email" type="email" autocomplete="email" required>
+            </label>
+
+            <label>
+              Phone
+              <input id="accountPhone" name="phone" type="tel" autocomplete="tel" required>
+            </label>
+
+            <label>
+              Verification password
+              <input id="accountPassword" name="password" type="password" autocomplete="new-password" minlength="4" required>
+            </label>
+
+            <button class="primary-button" type="submit">Enter dashboard</button>
+
+            <label>
+              Optional profile image
+              <input id="accountPhoto" name="photo" type="file" accept="image/*">
+            </label>
+          </form>
+
+          <form class="onboarding-card login-card hidden-app-chrome" id="loginForm">
+            <p class="eyebrow">Welcome back</p>
+            <h2>Unlock Alertly</h2>
+            <p class="small-text">Your account and reminders are stored locally on this device.</p>
+            <label>
+              Verification password
+              <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <p class="form-message" id="loginMessage"></p>
+            <button class="primary-button" type="submit">Open dashboard</button>
+            <button class="text-button" type="button" id="resetLocalButton">Create a new local account</button>
+          </form>
+        </section>
+        <header class="topbar">
+          <button class="icon-button" id="menuButton" type="button" aria-label="Open menu">
+            <span></span><span></span><span></span>
+          </button>
+          <h1>Alertly</h1>
+          <button class="avatar-button" id="profileButton" type="button" aria-label="Open profile">AB</button>
+        </header>
+
+        <section class="content" id="appContent" aria-live="polite"></section>
+
+        <button class="fab" id="quickAddButton" type="button" aria-label="Add alarm">+</button>
+
+        <nav class="bottom-nav" aria-label="Primary">
+          <button class="nav-item active" type="button" data-view="dashboard">
+            <span class="nav-icon grid-icon"></span>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-item" type="button" data-view="schedule">
+            <span class="nav-icon calendar-icon"></span>
+            <span>Schedule</span>
+          </button>
+          <button class="nav-item" type="button" data-view="alerts">
+            <span class="nav-icon bell-icon"></span>
+            <span>Alerts</span>
+          </button>
+          <button class="nav-item" type="button" data-view="settings">
+            <span class="nav-icon gear-icon"></span>
+            <span>Settings</span>
+          </button>
+        </nav>
+      </section>
+    </main>
+
+    <aside class="drawer" id="drawer" aria-hidden="true">
+      <div class="drawer-panel">
+        <div>
+          <p class="eyebrow">Good morning</p>
+          <h2>Stay on time</h2>
+        </div>
+        <button class="drawer-action" type="button" data-view-link="dashboard">Dashboard</button>
+        <button class="drawer-action" type="button" data-view-link="schedule">Schedule</button>
+        <button class="drawer-action" type="button" data-view-link="alerts">Alerts</button>
+        <button class="drawer-action" type="button" data-view-link="settings">Settings</button>
+      </div>
+    </aside>
+
+    <dialog id="alarmDialog" class="dialog">
+      <form method="dialog" class="alarm-form" id="alarmForm">
+        <div class="form-header">
+          <div>
+            <p class="eyebrow">Alarm</p>
+            <h2 id="dialogTitle">New alert</h2>
+          </div>
+          <button class="close-button" type="button" id="closeDialogButton" aria-label="Close">×</button>
+        </div>
+
+        <label>
+          Label
+          <input id="alarmLabel" name="label" type="text" autocomplete="off" required>
+        </label>
+
+        <input id="alarmTime" name="time" type="time" value="07:30" required hidden>
+
+        <label>
+          Reminder space
+          <select id="alarmType" name="type">
+            <option value="alarm">Standalone alarm</option>
+            <option value="event">Event reminder</option>
+          </select>
+        </label>
+
+        <label class="checkbox-label event-only">
+          <input id="eventHasAlarm" name="hasAlarm" type="checkbox" checked>
+          Ring an alarm for this event
+        </label>
+
+        <div class="wheel-setter" aria-label="Interactive wheel time setter">
+          <div class="wheel-header">
+            <span class="eyebrow">Select time</span>
+            <div class="time-format-toggle" role="group" aria-label="Time format">
+              <button class="active" id="format12Button" type="button" data-format="12">12h</button>
+              <button id="format24Button" type="button" data-format="24">24h</button>
+            </div>
+          </div>
+          <div class="wheel-picker">
+            <div class="wheel-highlight"></div>
+            <div class="time-wheel" id="hourWheel" tabindex="0" aria-label="Hour"></div>
+            <strong>:</strong>
+            <div class="time-wheel" id="minuteWheel" tabindex="0" aria-label="Minute"></div>
+            <div class="ampm-picker" id="ampmPicker">
+              <button class="active" type="button" data-period="AM">AM</button>
+              <button type="button" data-period="PM">PM</button>
+            </div>
+          </div>
+          <button class="small-action add-time-action" id="addEventTimeButton" type="button">Add time to event</button>
+          <div class="time-chip-row" id="eventTimeChips"></div>
+        </div>
+
+        <label>
+          Date
+          <input id="alarmDate" name="date" type="date">
+        </label>
+
+        <label>
+          Repeat
+          <select id="alarmRepeat" name="repeat">
+            <option>Once</option>
+            <option>Daily</option>
+            <option>Weekdays</option>
+            <option>Weekends</option>
+            <option>Weekly</option>
+            <option>Monthly</option>
+            <option>Yearly</option>
+          </select>
+        </label>
+
+        <div class="repeat-options event-only" id="repeatOptions">
+          <div class="day-picker" id="dayPicker" aria-label="Repeat days">
+            <button type="button" data-day="Mon">M</button>
+            <button type="button" data-day="Tue">T</button>
+            <button type="button" data-day="Wed">W</button>
+            <button type="button" data-day="Thu">T</button>
+            <button type="button" data-day="Fri">F</button>
+            <button type="button" data-day="Sat">S</button>
+            <button type="button" data-day="Sun">S</button>
+          </div>
+          <label class="monthly-field">
+            Day of month
+            <input id="monthlyDay" name="monthlyDay" type="number" min="1" max="31" value="1">
+          </label>
+          <div class="interval-grid yearly-field">
+            <label>
+              Month
+              <select id="yearlyMonth" name="yearlyMonth">
+                <option value="1">January</option>
+                <option value="2">February</option>
+                <option value="3">March</option>
+                <option value="4">April</option>
+                <option value="5">May</option>
+                <option value="6">June</option>
+                <option value="7">July</option>
+                <option value="8">August</option>
+                <option value="9">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+            </label>
+            <label>
+              Day
+              <input id="yearlyDay" name="yearlyDay" type="number" min="1" max="31" value="1">
+            </label>
+          </div>
+        </div>
+
+        <label>
+          Category
+          <select id="alarmCategory" name="category">
+            <option>Work</option>
+            <option>Health</option>
+            <option>Personal</option>
+            <option>Focus</option>
+            <option>Rest</option>
+          </select>
+        </label>
+
+        <label class="checkbox-label event-only" id="burstToggleRow">
+          <input id="eventBurstEnabled" name="burstEnabled" type="checkbox">
+          Repeat the event alarm during that day
+        </label>
+
+        <div class="interval-grid" id="burstControls">
+          <label>
+            Ring every
+            <input id="alarmIntervalValue" name="intervalValue" type="number" min="0" max="365" value="0">
+          </label>
+          <label>
+            Unit
+            <select id="alarmIntervalUnit" name="intervalUnit">
+              <option value="none">None</option>
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+              <option value="weeks">Weeks</option>
+              <option value="months">Months</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          Notes
+          <input id="alarmNotes" name="notes" type="text" autocomplete="off">
+        </label>
+
+        <div class="form-row">
+          <label class="checkbox-label">
+            <input id="alarmEnabled" name="enabled" type="checkbox" checked>
+            Enabled
+          </label>
+          <button class="delete-button" id="deleteAlarmButton" type="button">Delete</button>
+        </div>
+
+        <button class="primary-button" type="submit">Save alert</button>
+      </form>
+    </dialog>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

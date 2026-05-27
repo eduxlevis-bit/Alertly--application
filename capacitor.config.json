@@ -1,0 +1,13 @@
+{
+  "appId": "com.alertly.app",
+  "appName": "Alertly",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false
+    }
+  }
+}
