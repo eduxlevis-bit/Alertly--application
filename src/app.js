@@ -350,21 +350,63 @@ function notifyOverdueItems() {
 // ========== NATIVE ALARM FUNCTIONS (using @capacitor/local-notifications) ==========
 import { LocalNotifications } from '@capacitor/local-notifications';
 
+function nativeNotificationsAvailable() {
+  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+}
+
+function notificationIdFor(value) {
+  const source = String(typeof value === "object" ? value.id : value);
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash * 31) + source.charCodeAt(index)) | 0;
+  }
+  return ((hash >>> 0) % 2147483646) + 1;
+}
+
+async function ensureNativeNotificationPermission() {
+  if (!nativeNotificationsAvailable()) return false;
+  const current = await LocalNotifications.checkPermissions();
+  if (current.display === "granted") return true;
+  const requested = await LocalNotifications.requestPermissions();
+  return requested.display === "granted";
+}
+
+async function cancelNativeAlarm(value) {
+  if (!nativeNotificationsAvailable()) return;
+  try {
+    await LocalNotifications.cancel({
+      notifications: [{ id: notificationIdFor(value) }]
+    });
+  } catch (err) {
+    console.error("Unable to cancel native alarm:", err);
+  }
+}
+
 async function scheduleNativeAlarm(item) {
   // Only on Android native app
-  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') return;
+  if (!nativeNotificationsAvailable()) return;
+  if (!itemHasRingingAlarm(item)) {
+    await cancelNativeAlarm(item);
+    return;
+  }
 
   const alarmTime = dateTimeForItem(item);
   const now = new Date();
-  if (alarmTime <= now) return;
+  if (alarmTime <= now) {
+    await cancelNativeAlarm(item);
+    return;
+  }
+
+  const hasPermission = await ensureNativeNotificationPermission();
+  if (!hasPermission) return;
 
   // Cancel any existing notification for this item
-  await LocalNotifications.cancel({ notifications: [{ id: item.id }] });
+  await cancelNativeAlarm(item);
 
   // Schedule a local notification
   await LocalNotifications.schedule({
     notifications: [{
-      id: item.id,
+      id: notificationIdFor(item),
       title: item.label,
       body: item.notes || "Time to check Alertly!",
       schedule: {
@@ -387,9 +429,7 @@ async function rescheduleAllNativeAlarms() {
 
 async function requestExactAlarmPermission() {
   // Not needed for LocalNotifications, but we request notification permissions
-  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
-    await LocalNotifications.requestPermissions();
-  }
+  await ensureNativeNotificationPermission();
 }
 
 // ========== YOUR ORIGINAL RENDER FUNCTIONS (unchanged, but we'll inject native alarm reschedule) ==========
@@ -772,11 +812,7 @@ async function deleteCurrentItem() {
   closeDialog();
   render();
   // Cancel native alarm for the deleted item
-  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
-    try {
-      await AndroidAlarmManager.cancel({ id: itemId });
-    } catch(e) { /* ignore */ }
-  }
+  await cancelNativeAlarm(itemId);
 }
 
 function buildWheelValues() {
@@ -1009,11 +1045,7 @@ content.addEventListener("change", async (event) => {
         await scheduleNativeAlarm(changedItem);
       } else {
         // Cancel native alarm if disabled
-        if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
-          try {
-            await AndroidAlarmManager.cancel({ id: changedItem.id });
-          } catch(e) { /* ignore */ }
-        }
+        await cancelNativeAlarm(changedItem);
       }
     }
   }
