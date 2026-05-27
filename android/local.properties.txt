@@ -1,0 +1,1 @@
+sdk.dir=C\:\\Users\\BEST\\AppData\\Local\\Android\\Sdk
