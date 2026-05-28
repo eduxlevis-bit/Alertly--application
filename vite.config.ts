@@ -2,10 +2,11 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   base: './',
-  root: './src',
   build: {
-    outDir: '../dist',
-    minify: false,
-    emptyOutDir: true,
-  },
+    rollupOptions: {
+      input: {
+        main: 'index.html'   // Vite will automatically pick up the script tag from here
+      }
+    }
+  }
 });
