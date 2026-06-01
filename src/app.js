@@ -1,5 +1,6 @@
 // ========== CAPACITOR & NATIVE ALARM IMPORTS ==========
 import { Capacitor } from '@capacitor/core';
+import { SplashScreen } from '@capacitor/splash-screen';
 
 
 // ========== YOUR ORIGINAL CONSTANTS & STATE (unchanged) ==========
@@ -17,10 +18,12 @@ const state = {
   editingId: null,
   selectedDate: todayISO(),
   scheduleMode: "events",
+  creatingAccount: false,
   timeFormat: "12",
   selectedPeriod: "AM",
   pendingTimes: [],
   selectedDays: [],
+  notificationMessage: "",
   vault: loadVault()
 };
 
@@ -29,6 +32,7 @@ const phone = document.querySelector(".phone");
 const onboarding = document.querySelector("#onboarding");
 const accountForm = document.querySelector("#accountForm");
 const loginForm = document.querySelector("#loginForm");
+const loginAccountSelect = document.querySelector("#loginAccountSelect");
 const resetLocalButton = document.querySelector("#resetLocalButton");
 const loginMessage = document.querySelector("#loginMessage");
 const avatarButton = document.querySelector("#profileButton");
@@ -37,6 +41,7 @@ const form = document.querySelector("#alarmForm");
 const deleteButton = document.querySelector("#deleteAlarmButton");
 const drawer = document.querySelector("#drawer");
 const alarmTime = document.querySelector("#alarmTime");
+const alarmTimePicker = document.querySelector("#alarmTimePicker");
 const alarmType = document.querySelector("#alarmType");
 const eventHasAlarm = document.querySelector("#eventHasAlarm");
 const alarmRepeat = document.querySelector("#alarmRepeat");
@@ -72,6 +77,8 @@ function localISO(date) {
 function blankVault() {
   return {
     account: null,
+    accounts: [],
+    activeAccountId: "",
     session: false,
     settings: {
       smartSnooze: true,
@@ -150,19 +157,68 @@ function loadVault() {
     const stored = localStorage.getItem(vaultKey);
     if (!stored) return blankVault();
     const parsed = JSON.parse(stored);
-    return {
+    const vault = {
       ...blankVault(),
       ...parsed,
       settings: { ...blankVault().settings, ...(parsed.settings || {}) },
       items: (parsed.items || []).map(normalizeItem)
     };
+    if (vault.account && !vault.account.id) vault.account.id = id();
+    if (!Array.isArray(vault.accounts)) vault.accounts = [];
+    if (vault.account && !vault.accounts.some((entry) => entry.id === vault.account.id)) {
+      vault.accounts.push({
+        ...vault.account,
+        settings: vault.settings,
+        items: vault.items
+      });
+    }
+    vault.activeAccountId = vault.activeAccountId || vault.account?.id || vault.accounts[0]?.id || "";
+    const active = vault.accounts.find((entry) => entry.id === vault.activeAccountId);
+    if (active) {
+      vault.account = accountProfile(active);
+      vault.settings = { ...blankVault().settings, ...(active.settings || vault.settings) };
+      vault.items = (active.items || vault.items || []).map(normalizeItem);
+    }
+    return vault;
   } catch {
     return blankVault();
   }
 }
 
 function saveVault() {
+  syncActiveAccountSnapshot();
   localStorage.setItem(vaultKey, JSON.stringify(state.vault));
+}
+
+function accountProfile(entry) {
+  if (!entry) return null;
+  const { settings: _settings, items: _items, ...profile } = entry;
+  return profile;
+}
+
+function syncActiveAccountSnapshot() {
+  if (!state.vault.account) return;
+  const snapshot = {
+    ...state.vault.account,
+    settings: { ...state.vault.settings },
+    items: items().map(normalizeItem)
+  };
+  state.vault.accounts = [
+    snapshot,
+    ...(state.vault.accounts || []).filter((entry) => entry.id !== snapshot.id)
+  ];
+  state.vault.activeAccountId = snapshot.id;
+}
+
+function switchAccount(accountId) {
+  syncActiveAccountSnapshot();
+  const next = (state.vault.accounts || []).find((entry) => entry.id === accountId);
+  if (!next) return false;
+  state.vault.activeAccountId = next.id;
+  state.vault.account = accountProfile(next);
+  state.vault.settings = { ...blankVault().settings, ...(next.settings || {}) };
+  state.vault.items = (next.items || []).map(normalizeItem);
+  return true;
 }
 
 function fileToDataURL(file) {
@@ -371,6 +427,21 @@ async function ensureNativeNotificationPermission() {
   return requested.display === "granted";
 }
 
+async function refreshNotificationMessage() {
+  if (!nativeNotificationsAvailable()) {
+    state.notificationMessage = "Native alarms are only available in the Android app.";
+    return;
+  }
+  try {
+    const permissions = await LocalNotifications.checkPermissions();
+    const pending = await LocalNotifications.getPending();
+    state.notificationMessage = `Notifications: ${permissions.display}. Pending alarms: ${pending.notifications.length}.`;
+  } catch (err) {
+    state.notificationMessage = "Unable to read notification status.";
+    console.error("Notification status error:", err);
+  }
+}
+
 async function cancelNativeAlarm(value) {
   if (!nativeNotificationsAvailable()) return;
   try {
@@ -398,13 +469,16 @@ async function scheduleNativeAlarm(item) {
   }
 
   const hasPermission = await ensureNativeNotificationPermission();
-  if (!hasPermission) return;
+  if (!hasPermission) {
+    state.notificationMessage = "Notification permission was not granted, so alarms cannot ring yet.";
+    return;
+  }
 
   // Cancel any existing notification for this item
   await cancelNativeAlarm(item);
 
   // Schedule a local notification
-  await LocalNotifications.schedule({
+  const result = await LocalNotifications.schedule({
     notifications: [{
       id: notificationIdFor(item),
       title: item.label,
@@ -417,7 +491,9 @@ async function scheduleNativeAlarm(item) {
       actionTypeId: "OPEN_APP"
     }]
   });
-  console.log(`⏰ Notification scheduled for ${item.label} at ${alarmTime}`);
+  state.notificationMessage = `${item.label} scheduled for ${alarmTime.toLocaleString()}.`;
+  console.log(`Notification scheduled for ${item.label} at ${alarmTime}`);
+  return result;
 }
 
 async function rescheduleAllNativeAlarms() {
@@ -434,11 +510,12 @@ async function requestExactAlarmPermission() {
 
 // ========== YOUR ORIGINAL RENDER FUNCTIONS (unchanged, but we'll inject native alarm reschedule) ==========
 function render() {
+  const hasSavedAccounts = (state.vault.accounts || []).length > 0;
   const hasAccount = Boolean(account());
   const isUnlocked = hasAccount && state.vault.session;
   onboarding.classList.toggle("hidden", isUnlocked);
-  accountForm.classList.toggle("hidden-app-chrome", hasAccount);
-  loginForm.classList.toggle("hidden-app-chrome", !hasAccount);
+  accountForm.classList.toggle("hidden-app-chrome", hasSavedAccounts && !state.creatingAccount);
+  loginForm.classList.toggle("hidden-app-chrome", !hasSavedAccounts || state.creatingAccount);
   phone.classList.toggle("compact", settings().compactCards);
   phone.classList.toggle("dark", settings().darkMode);
   document.body.classList.toggle("dark-stage", settings().darkMode);
@@ -446,6 +523,7 @@ function render() {
   document.querySelector(".bottom-nav").classList.toggle("hidden-app-chrome", !isUnlocked);
   document.querySelector("#quickAddButton").classList.toggle("hidden-app-chrome", !isUnlocked);
   renderAvatarButton();
+  renderAccountChoices();
 
   if (!isUnlocked) {
     content.innerHTML = "";
@@ -467,7 +545,15 @@ function render() {
 
   checkAllUpcomingReminders();
   notifyOverdueItems();
-  rescheduleAllNativeAlarms();  // <-- added: reschedule all native alarms after each render
+}
+
+function renderAccountChoices() {
+  if (!loginAccountSelect) return;
+  const choices = state.vault.accounts || [];
+  loginAccountSelect.innerHTML = choices.map((entry) => {
+    const label = `${entry.nickname || entry.name || "Alertly"} - ${entry.email || entry.phone || "local account"}`;
+    return `<option value="${escapeAttribute(entry.id)}" ${entry.id === state.vault.activeAccountId ? "selected" : ""}>${escapeHTML(label)}</option>`;
+  }).join("");
 }
 
 function renderAvatarButton() {
@@ -642,6 +728,10 @@ function renderAlerts() {
       <article class="summary-card"><strong>${enabled}</strong><p class="small-text">Ringing</p></article>
       <article class="summary-card"><strong>${paused}</strong><p class="small-text">Turned off</p></article>
     </div>
+    <div class="notification-panel">
+      <p class="small-text">${escapeHTML(state.notificationMessage || "Save an alarm or tap the button to check Android notification permission.")}</p>
+      <button class="small-action" type="button" data-request-notifications>Check notification permission</button>
+    </div>
     <div class="section-title">
       <h2>Next Up</h2>
       <span>${next ? relativeTime(next) : "None"}</span>
@@ -737,6 +827,7 @@ function openDialog(idValue = null, dateValue = state.selectedDate, typeValue = 
   alarmType.value = item.type || "alarm";
   document.querySelector("#alarmLabel").value = item.label;
   alarmTime.value = primaryTime(item);
+  alarmTimePicker.value = primaryTime(item);
   document.querySelector("#alarmDate").value = item.date || todayISO();
   alarmRepeat.value = item.repeat || "Once";
   document.querySelector("#alarmCategory").value = item.category;
@@ -828,6 +919,8 @@ function wheelOptions(values) {
 }
 
 function syncWheelFromTime(time) {
+  alarmTime.value = time;
+  if (alarmTimePicker) alarmTimePicker.value = time;
   const [rawHour, minute] = time.split(":").map(Number);
   state.selectedPeriod = rawHour >= 12 ? "PM" : "AM";
   buildWheelValues();
@@ -876,10 +969,18 @@ function paintWheelTime() {
     if (state.selectedPeriod === "AM" && hour === 12) hour = 0;
   }
   alarmTime.value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  if (alarmTimePicker) alarmTimePicker.value = alarmTime.value;
   ampmPicker.classList.toggle("hidden", state.timeFormat === "24");
   format12Button.classList.toggle("active", state.timeFormat === "12");
   format24Button.classList.toggle("active", state.timeFormat === "24");
   ampmPicker.querySelectorAll("[data-period]").forEach((button) => button.classList.toggle("active", button.dataset.period === state.selectedPeriod));
+}
+
+function stepAlarmTime(minutes) {
+  const [hour, minute] = (alarmTimePicker.value || alarmTime.value || "07:30").split(":").map(Number);
+  const date = new Date();
+  date.setHours(hour, minute + minutes, 0, 0);
+  syncWheelFromTime(`${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`);
 }
 
 function renderEventTimeChips() {
@@ -943,7 +1044,9 @@ function escapeAttribute(value) {
 accountForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = new FormData(accountForm);
+  const newAccountId = id();
   state.vault.account = {
+    id: newAccountId,
     name: data.get("name").trim(),
     email: data.get("email").trim(),
     phone: data.get("phone").trim(),
@@ -952,8 +1055,11 @@ accountForm.addEventListener("submit", async (event) => {
     avatar: "wave",
     photo: await fileToDataURL(data.get("photo"))
   };
+  state.vault.activeAccountId = newAccountId;
   state.vault.items = starterItems();
+  state.vault.settings = blankVault().settings;
   state.vault.session = true;
+  state.creatingAccount = false;
   saveVault();
   render();
   await rescheduleAllNativeAlarms();
@@ -962,6 +1068,8 @@ accountForm.addEventListener("submit", async (event) => {
 loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const data = new FormData(loginForm);
+  const accountId = data.get("accountId") || state.vault.activeAccountId;
+  switchAccount(accountId);
   if (data.get("password") === account()?.password) {
     state.vault.session = true;
     loginMessage.textContent = "";
@@ -973,13 +1081,13 @@ loginForm.addEventListener("submit", (event) => {
 });
 
 resetLocalButton.addEventListener("click", () => {
-  state.vault = blankVault();
-  saveVault();
+  state.creatingAccount = true;
+  accountForm.reset();
   loginMessage.textContent = "";
   render();
 });
 
-content.addEventListener("click", (event) => {
+content.addEventListener("click", async (event) => {
   const editButton = event.target.closest("[data-edit]");
   const dateButton = event.target.closest("[data-date]");
   const monthButton = event.target.closest("[data-month]");
@@ -990,6 +1098,7 @@ content.addEventListener("click", (event) => {
   const viewJump = event.target.closest("[data-view-jump]");
   const quickTheme = event.target.closest("[data-quick-theme]");
   const logout = event.target.closest("[data-logout]");
+  const requestNotifications = event.target.closest("[data-request-notifications]");
 
   if (editButton) openDialog(editButton.dataset.edit);
   if (dateButton) {
@@ -1024,7 +1133,13 @@ content.addEventListener("click", (event) => {
   }
   if (logout) {
     state.vault.session = false;
+    state.creatingAccount = false;
     saveVault();
+    render();
+  }
+  if (requestNotifications) {
+    await ensureNativeNotificationPermission();
+    await refreshNotificationMessage();
     render();
   }
 });
@@ -1114,6 +1229,12 @@ document.querySelector("#closeDialogButton").addEventListener("click", closeDial
 deleteButton.addEventListener("click", deleteCurrentItem);
 form.addEventListener("submit", upsertItem);
 alarmTime.addEventListener("change", () => syncWheelFromTime(alarmTime.value));
+alarmTimePicker.addEventListener("change", () => syncWheelFromTime(alarmTimePicker.value));
+document.querySelector(".time-step-row").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-time-step]");
+  if (!button) return;
+  stepAlarmTime(Number(button.dataset.timeStep));
+});
 [alarmType, eventHasAlarm, alarmRepeat, eventBurstEnabled].forEach((element) => element.addEventListener("change", updateDialogControls));
 addEventTimeButton.addEventListener("click", addCurrentWheelTimeToEvent);
 eventTimeChips.addEventListener("click", (event) => {
@@ -1166,6 +1287,15 @@ ampmPicker.addEventListener("click", (event) => {
   });
 });
 
+async function hideLaunchSplash() {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await SplashScreen.hide();
+  } catch (err) {
+    console.error("Unable to hide splash screen:", err);
+  }
+}
+
 // ========== STARTUP ==========
 if ("Notification" in window && Notification.permission !== "denied") {
   Notification.requestPermission();
@@ -1188,3 +1318,4 @@ setInterval(() => {
 }, 600000);
 
 render();
+hideLaunchSplash();
