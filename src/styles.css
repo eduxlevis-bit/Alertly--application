@@ -835,6 +835,104 @@ body.dark-stage .alarm-form {
   background: rgba(14, 18, 28, .52);
 }
 
+.alarm-alert-dialog {
+  padding: 0;
+}
+
+.alarm-alert-card {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  width: min(420px, calc(100vw - 32px));
+  max-width: 420px;
+  text-align: center;
+  background: var(--card);
+  border-radius: 24px;
+}
+
+.alarm-alert-dialog .hero-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 2.25rem;
+  font-weight: 800;
+}
+
+.alarm-alert-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.setting-card.setting-sound {
+  display: grid;
+  gap: 12px;
+}
+
+.setting-card.setting-sound .alarm-tone-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.setting-card.setting-sound input[type="file"] {
+  display: none;
+}
+
+.setting-card.setting-sound .file-button {
+  display: inline-flex;
+  min-width: 120px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.setting-card.setting-sound .file-button:hover {
+  background: var(--paper);
+}
+
+.alarm-alert-dialog .small-text {
+  opacity: 0.9;
+}
+
+.alarm-alert-dialog .small-action,
+.alarm-alert-dialog .delete-button {
+  min-width: 130px;
+}
+
+.alarm-alert-dialog .delete-button {
+  border-radius: 14px;
+}
+
+.alarm-alert-dialog .small-action {
+  border-radius: 14px;
+}
+
+.alarm-alert-card .hero-time strong {
+  font-size: 2.8rem;
+}
+
+.alarm-alert-card .hero-time span {
+  font-size: 1.1rem;
+  opacity: 0.7;
+}
+
+.alarm-alert-dialog {
+  border-radius: 28px;
+}
+
+.alarm-alert-dialog::backdrop {
+  background: rgba(14, 18, 28, .65);
+}
+
+.alarm-alert-dialog .headline {
+  margin: 0;
+}
+
 .alarm-form {
   display: grid;
   gap: 14px;

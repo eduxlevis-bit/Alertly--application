@@ -103,7 +103,7 @@
     </aside>
 
     <dialog id="alarmDialog" class="dialog">
-      <form method="dialog" class="alarm-form" id="alarmForm">
+      <form class="alarm-form" id="alarmForm">
         <div class="form-header">
           <div>
             <p class="eyebrow">Alarm</p>
@@ -227,6 +227,11 @@
           Repeat the event alarm during that day
         </label>
 
+        <label class="checkbox-label">
+          <input id="alarmCustomSnooze" name="customSnooze" type="checkbox">
+          Custom snooze & ring time
+        </label>
+
         <div class="interval-grid" id="burstControls">
           <label>
             Ring every
@@ -245,6 +250,17 @@
           </label>
         </div>
 
+        <div class="interval-grid" id="snoozeIntervalControls" style="display: none;">
+          <label>
+            Snooze interval (minutes)
+            <input id="alarmSnoozeMinutes" name="snoozeMinutes" type="number" min="1" max="60" value="5">
+          </label>
+          <label>
+            Max ring time (minutes)
+            <input id="alarmMaxRingMinutes" name="maxRingMinutes" type="number" min="1" max="30" value="4">
+          </label>
+        </div>
+
         <label>
           Notes
           <input id="alarmNotes" name="notes" type="text" autocomplete="off">
@@ -260,6 +276,19 @@
 
         <button class="primary-button" type="submit">Save alert</button>
       </form>
+    </dialog>
+
+    <dialog id="alarmAlertDialog" class="dialog alarm-alert-dialog">
+      <div class="alarm-alert-card">
+        <p class="eyebrow">Alarm ringing</p>
+        <h2 id="alarmAlertLabel">Wake up</h2>
+        <div class="hero-time" id="alarmAlertTime"><strong>07:30</strong><span>AM</span></div>
+        <p class="small-text" id="alarmAlertDetails">Snooze or turn off the alarm from here.</p>
+        <div class="form-row alarm-alert-actions">
+          <button class="small-action" type="button" id="alarmSnoozeButton">Snooze 5m</button>
+          <button class="delete-button" type="button" id="alarmDismissButton">Turn off</button>
+        </div>
+      </div>
     </dialog>
 
     <script type="module" src="/app.js"></script>

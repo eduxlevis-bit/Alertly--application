@@ -54,6 +54,27 @@ const format12Button = document.querySelector("#format12Button");
 const format24Button = document.querySelector("#format24Button");
 const eventTimeChips = document.querySelector("#eventTimeChips");
 const addEventTimeButton = document.querySelector("#addEventTimeButton");
+const alarmAlertDialog = document.querySelector("#alarmAlertDialog");
+const alarmAlertLabel = document.querySelector("#alarmAlertLabel");
+const alarmAlertTime = document.querySelector("#alarmAlertTime");
+const alarmAlertDetails = document.querySelector("#alarmAlertDetails");
+const alarmSnoozeButton = document.querySelector("#alarmSnoozeButton");
+const alarmDismissButton = document.querySelector("#alarmDismissButton");
+const alarmCustomSnooze = document.querySelector("#alarmCustomSnooze");
+const snoozeIntervalControls = document.querySelector("#snoozeIntervalControls");
+const alarmSnoozeMinutes = document.querySelector("#alarmSnoozeMinutes");
+const alarmMaxRingMinutes = document.querySelector("#alarmMaxRingMinutes");
+
+const alarmAudio = new Audio();
+alarmAudio.loop = true;
+let alarmAudioContext = null;
+let alarmOscillator = null;
+let activeAlarmTimeout = null;
+let alarmPollInterval = null;
+let currentAlarmItem = null;
+let snoozeUntil = null;
+let recentAlarmTriggers = new Map();
+const MAX_ALARM_DURATION_MS = 120000;
 
 // ========== YOUR ORIGINAL HELPER FUNCTIONS (unchanged) ==========
 function id() {
@@ -85,7 +106,10 @@ function blankVault() {
       gradualVolume: true,
       vibration: false,
       compactCards: false,
-      darkMode: false
+      darkMode: false,
+      customAlarmTone: null,
+      alarmSnoozeMinutes: 5,
+      alarmMaxRingMinutes: 2
     },
     items: []
   };
@@ -146,6 +170,9 @@ function normalizeItem(item) {
     burstEnabled: false,
     intervalValue: 0,
     intervalUnit: "none",
+    customSnoozeEnabled: false,
+    snoozeMinutes: 5,
+    maxRingMinutes: 4,
     notes: "",
     enabled: true,
     ...item
@@ -311,7 +338,8 @@ function relativeTime(item) {
 }
 
 function intervalText(item) {
-  if (!item.burstEnabled || !item.intervalUnit || item.intervalUnit === "none") return "Interval off";
+  // Only show interval text for event alarms with burst enabled
+  if (item.type !== "event" || !item.burstEnabled || !item.intervalUnit || item.intervalUnit === "none") return "";
   return `Rings every ${item.intervalValue || 0} ${item.intervalUnit}`;
 }
 
@@ -403,6 +431,177 @@ function notifyOverdueItems() {
   }
 }
 
+function getAlarmToneSource() {
+  return settings().customAlarmTone?.dataUrl || null;
+}
+
+function startDefaultAlarmTone() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    alarmAudioContext = new AudioCtx();
+    alarmOscillator = alarmAudioContext.createOscillator();
+    const gain = alarmAudioContext.createGain();
+    alarmOscillator.type = "triangle";
+    alarmOscillator.frequency.setValueAtTime(880, alarmAudioContext.currentTime);
+    gain.gain.setValueAtTime(0.12, alarmAudioContext.currentTime);
+    alarmOscillator.connect(gain).connect(alarmAudioContext.destination);
+    alarmOscillator.start();
+  } catch (err) {
+    console.warn("Unable to start default alarm tone:", err);
+  }
+}
+
+function stopAlarmTone() {
+  if (alarmAudio && !alarmAudio.paused) {
+    alarmAudio.pause();
+    alarmAudio.currentTime = 0;
+    alarmAudio.src = "";
+  }
+  if (alarmOscillator) {
+    try {
+      alarmOscillator.stop();
+    } catch {
+      // ignore if already stopped
+    }
+    alarmOscillator.disconnect();
+    alarmOscillator = null;
+  }
+  if (alarmAudioContext) {
+    alarmAudioContext.close().catch(() => {});
+    alarmAudioContext = null;
+  }
+  if (activeAlarmTimeout) {
+    clearTimeout(activeAlarmTimeout);
+    activeAlarmTimeout = null;
+  }
+}
+
+function playAlarmTone() {
+  stopAlarmTone();
+  const customTone = getAlarmToneSource();
+  const durationMs = (settings().alarmMaxRingMinutes || 2) * 60000;
+  if (customTone) {
+    alarmAudio.src = customTone;
+    alarmAudio.loop = true;
+    alarmAudio.play().catch(() => {
+      console.warn("Unable to play custom alarm tone, falling back to default tone.");
+      startDefaultAlarmTone();
+    });
+  } else {
+    startDefaultAlarmTone();
+  }
+  activeAlarmTimeout = window.setTimeout(() => {
+    stopAlarmTone();
+    if (alarmAlertDialog.open) {
+      alarmAlertDetails.textContent = "Alarm stopped after maximum ring duration.";
+    }
+  }, durationMs);
+}
+
+function showActiveAlarm(item) {
+  currentAlarmItem = item;
+  const parts = timeParts(primaryTime(item));
+  alarmAlertLabel.textContent = item.label || "Alarm";
+  alarmAlertTime.innerHTML = `<strong>${parts.main}</strong><span>${parts.suffix}</span>`;
+  alarmAlertDetails.textContent = `Category: ${item.category || "Alertly"}. Tap Snooze or Turn off.`;
+  if (alarmAlertDialog) {
+    alarmAlertDialog.showModal();
+  }
+  playAlarmTone();
+  state.notificationMessage = `Alarm ${item.label} is ringing.`;
+  saveVault();
+  render();
+}
+
+function closeActiveAlarmDialog() {
+  if (alarmAlertDialog && alarmAlertDialog.open) {
+    alarmAlertDialog.close();
+  }
+}
+
+function snoozeActiveAlarm() {
+  if (!currentAlarmItem) return;
+  const minutes = currentAlarmItem.customSnoozeEnabled ? 
+    (currentAlarmItem.snoozeMinutes || 5) : 
+    (settings().alarmSnoozeMinutes || 5);
+  snoozeUntil = new Date(Date.now() + minutes * 60000);
+  state.notificationMessage = `${currentAlarmItem.label} snoozed for ${minutes} minutes.`;
+  stopAlarmTone();
+  closeActiveAlarmDialog();
+  saveVault();
+  render();
+}
+
+async function dismissActiveAlarm() {
+  if (!currentAlarmItem) return;
+  const item = currentAlarmItem;
+  state.vault.items = items().map((entry) => entry.id === item.id ? { ...entry, enabled: false } : entry);
+  stopAlarmTone();
+  closeActiveAlarmDialog();
+  currentAlarmItem = null;
+  snoozeUntil = null;
+  state.notificationMessage = `Alarm turned off.`;
+  saveVault();
+  await cancelNativeAlarm(item);
+  render();
+}
+
+function alarmTriggerKey(item, target) {
+  return `${item.id}:${target.toISOString()}`;
+}
+
+function checkForAlarmTriggers() {
+  const now = new Date();
+  if (currentAlarmItem || (snoozeUntil && now < snoozeUntil)) return;
+  const candidate = items().filter(itemHasRingingAlarm).map((item) => {
+    const target = dateTimeForItem(item);
+    const maxRingMinutes = item.customSnoozeEnabled ? (item.maxRingMinutes || 4) : (settings().alarmMaxRingMinutes || 2);
+    const dueWindowMs = maxRingMinutes * 60000;
+    return { item, target, dueWindowMs };
+  }).find(({ target, dueWindowMs }) => target <= now && now - target < dueWindowMs);
+
+  if (!candidate) return;
+  const key = alarmTriggerKey(candidate.item, candidate.target);
+  if (recentAlarmTriggers.has(key)) {
+    const last = recentAlarmTriggers.get(key);
+    if (now - last < 300000) return; // avoid duplicate triggers within 5 minutes
+  }
+  recentAlarmTriggers.set(key, now);
+  showActiveAlarm(candidate.item);
+}
+
+async function registerNativeNotificationActions() {
+  if (!nativeNotificationsAvailable() || !LocalNotifications.registerActionTypes) return;
+  try {
+    await LocalNotifications.registerActionTypes({
+      types: [{
+        id: "ALARM_ACTIONS",
+        actions: [
+          { id: "SNOOZE", title: "Snooze 5m" },
+          { id: "DISMISS", title: "Turn off" }
+        ]
+      }] 
+    });
+  } catch (err) {
+    console.warn("Unable to register native alarm actions:", err);
+  }
+
+  LocalNotifications.addListener("localNotificationActionPerformed", async (action) => {
+    const itemId = action.notification?.extra?.itemId || action.notification?.id;
+    const item = items().find((entry) => entry.id === String(itemId) || notificationIdFor(entry) === Number(itemId));
+    if (!item) return;
+    if (action.actionId === "SNOOZE") {
+      currentAlarmItem = item;
+      snoozeActiveAlarm();
+    }
+    if (action.actionId === "DISMISS") {
+      currentAlarmItem = item;
+      await dismissActiveAlarm();
+    }
+  });
+}
+
 // ========== NATIVE ALARM FUNCTIONS (using @capacitor/local-notifications) ==========
 import { LocalNotifications } from '@capacitor/local-notifications';
 
@@ -488,7 +687,8 @@ async function scheduleNativeAlarm(item) {
         allowWhileIdle: true,   // helps on Android, but not exact
       },
       sound: "default",
-      actionTypeId: "OPEN_APP"
+      actionTypeId: "ALARM_ACTIONS",
+      extra: { itemId: item.id }
     }]
   });
   state.notificationMessage = `${item.label} scheduled for ${alarmTime.toLocaleString()}.`;
@@ -730,6 +930,7 @@ function renderAlerts() {
     </div>
     <div class="notification-panel">
       <p class="small-text">${escapeHTML(state.notificationMessage || "Save an alarm or tap the button to check Android notification permission.")}</p>
+      <p class="small-text">Alarm notifications use Alertly's built-in or custom tone when the app is active. Scheduled reminders use your device's default notification sound.</p>
       <button class="small-action" type="button" data-request-notifications>Check notification permission</button>
     </div>
     <div class="section-title">
@@ -753,6 +954,7 @@ function renderSettings() {
     ["compactCards", "Compact cards", "Keeps alarm rows tighter."]
   ];
 
+  const customAlarmTone = settings().customAlarmTone;
   return `
     <div class="section-title">
       <h2>Profile</h2>
@@ -783,6 +985,20 @@ function renderSettings() {
         <button class="delete-button visible" type="button" data-clear-photo>Clear photo</button>
       </div>
     </form>
+    <article class="setting-card setting-sound">
+      <div>
+        <h3>Alarm tone</h3>
+        <p class="small-text">Upload your own alarm audio to play when built-in Alertly alarms ring. Otherwise the app uses the built-in tone.</p>
+        ${customAlarmTone?.name ? `<p class="small-text">Current tone: ${escapeHTML(customAlarmTone.name)}</p>` : `<p class="small-text">No custom tone set.</p>`}
+      </div>
+      <div class="alarm-tone-actions">
+        <label class="file-button">
+          Select tone
+          <input type="file" accept="audio/*" data-custom-audio>
+        </label>
+        ${customAlarmTone?.name ? `<button class="small-action" type="button" data-clear-custom-audio>Clear</button>` : ``}
+      </div>
+    </article>
     <div class="section-title">
       <h2>Settings</h2>
       <button class="small-action" type="button" data-logout>Log out</button>
@@ -837,6 +1053,9 @@ function openDialog(idValue = null, dateValue = state.selectedDate, typeValue = 
   document.querySelector("#alarmEnabled").checked = item.enabled;
   eventHasAlarm.checked = item.hasAlarm !== false;
   eventBurstEnabled.checked = Boolean(item.burstEnabled);
+  if (alarmCustomSnooze) alarmCustomSnooze.checked = Boolean(item.customSnoozeEnabled);
+  if (alarmSnoozeMinutes) alarmSnoozeMinutes.value = item.snoozeMinutes || 5;
+  if (alarmMaxRingMinutes) alarmMaxRingMinutes.value = item.maxRingMinutes || 4;
   document.querySelector("#monthlyDay").value = item.monthlyDay || Number((item.date || todayISO()).slice(8, 10));
   document.querySelector("#yearlyMonth").value = item.yearlyMonth || Number((item.date || todayISO()).slice(5, 7));
   document.querySelector("#yearlyDay").value = item.yearlyDay || Number((item.date || todayISO()).slice(8, 10));
@@ -861,23 +1080,55 @@ async function upsertItem(event) {
   const type = data.get("type") || "alarm";
   const hasAlarm = type === "alarm" ? true : data.get("hasAlarm") === "on";
   const burstEnabled = type === "event" && hasAlarm && state.pendingTimes.length <= 1 && data.get("burstEnabled") === "on";
+  const customSnoozeEnabled = data.get("customSnooze") === "on";
+  const label = data.get("label").trim();
+  const time = data.get("time");
+  const date = data.get("date") || todayISO();
+  const repeat = data.get("repeat");
+  
+  // Validate label
+  if (!label) {
+    state.notificationMessage = "Alarm label is required.";
+    render();
+    return;
+  }
+
+  // Prevent duplicate same-time alarms (only for standalone alarms with "Once" repeat)
+  if (type === "alarm" && repeat === "Once") {
+    const duplicate = items().find((item) => 
+      item.id !== state.editingId && 
+      item.type === "alarm" && 
+      item.time === time && 
+      item.date === date && 
+      item.repeat === "Once"
+    );
+    if (duplicate) {
+      state.notificationMessage = "An alarm already exists for this exact time and date.";
+      render();
+      return;
+    }
+  }
+
   const next = normalizeItem({
     id: state.editingId || id(),
     type,
-    label: data.get("label").trim(),
-    time: data.get("time"),
-    date: data.get("date") || todayISO(),
-    repeat: data.get("repeat"),
+    label,
+    time,
+    date,
+    repeat,
     category: data.get("category"),
     hasAlarm,
-    alarmTimes: type === "event" && hasAlarm ? [...new Set([data.get("time"), ...state.pendingTimes])].sort() : [],
+    alarmTimes: type === "event" && hasAlarm ? [...new Set([time, ...state.pendingTimes])].sort() : [],
     repeatDays: state.selectedDays,
-    monthlyDay: Number(data.get("monthlyDay")) || Number((data.get("date") || todayISO()).slice(8, 10)),
-    yearlyMonth: Number(data.get("yearlyMonth")) || Number((data.get("date") || todayISO()).slice(5, 7)),
-    yearlyDay: Number(data.get("yearlyDay")) || Number((data.get("date") || todayISO()).slice(8, 10)),
+    monthlyDay: Number(data.get("monthlyDay")) || Number((date).slice(8, 10)),
+    yearlyMonth: Number(data.get("yearlyMonth")) || Number((date).slice(5, 7)),
+    yearlyDay: Number(data.get("yearlyDay")) || Number((date).slice(8, 10)),
     burstEnabled,
     intervalValue: burstEnabled ? Number(data.get("intervalValue")) || 0 : 0,
     intervalUnit: burstEnabled ? data.get("intervalUnit") : "none",
+    customSnoozeEnabled,
+    snoozeMinutes: customSnoozeEnabled ? (Number(data.get("snoozeMinutes")) || 5) : 5,
+    maxRingMinutes: customSnoozeEnabled ? (Number(data.get("maxRingMinutes")) || 4) : 4,
     notes: data.get("notes").trim(),
     enabled: data.get("enabled") === "on"
   });
@@ -889,10 +1140,16 @@ async function upsertItem(event) {
   }
   state.selectedDate = next.date;
   saveVault();
+  
+  // Close dialog before render to avoid visual glitches
   closeDialog();
   render();
+  
   // Schedule native alarm for the newly saved/updated item
   await scheduleNativeAlarm(next);
+  
+  state.notificationMessage = `${label} saved successfully.`;
+  render();
 }
 
 async function deleteCurrentItem() {
@@ -951,13 +1208,19 @@ function stepWheel(wheel, direction) {
 function snapWheelFromScroll(wheel) {
   const options = [...wheel.querySelectorAll(".wheel-option")];
   if (!options.length) return;
-  const scrollTop = wheel.scrollTop;
-  const optionHeight = options[0]?.offsetHeight || 40;
-  const nearestIndex = Math.round(scrollTop / optionHeight);
-  const clamped = Math.min(options.length - 1, Math.max(0, nearestIndex));
-  const targetValue = options[clamped].dataset.wheelValue;
-  selectWheelValue(wheel, targetValue);
-  options[clamped].scrollIntoView({ block: "center", behavior: "smooth" });
+  const wheelRect = wheel.getBoundingClientRect();
+  const wheelCenter = wheel.scrollTop + wheelRect.height / 2;
+  let closestOption = options[0];
+  let closestDistance = Infinity;
+  options.forEach((option) => {
+    const optionCenter = option.offsetTop + option.offsetHeight / 2;
+    const distance = Math.abs(optionCenter - wheelCenter);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestOption = option;
+    }
+  });
+  selectWheelValue(wheel, closestOption.dataset.wheelValue);
   paintWheelTime();
 }
 
@@ -994,12 +1257,18 @@ function updateDialogControls() {
   const isEvent = alarmType.value === "event";
   const hasAlarm = !isEvent || eventHasAlarm.checked;
   const singleTime = state.pendingTimes.length <= 1;
+  const isStandaloneAlarm = alarmType.value === "alarm";
+  const customSnoozeChecked = alarmCustomSnooze ? alarmCustomSnooze.checked : false;
+  
   document.querySelectorAll(".event-only").forEach((element) => element.classList.toggle("hidden-app-chrome", !isEvent));
   document.querySelector(".wheel-setter").classList.toggle("hidden-app-chrome", !hasAlarm);
   addEventTimeButton.classList.toggle("hidden-app-chrome", !isEvent || !hasAlarm);
   eventTimeChips.classList.toggle("hidden-app-chrome", !isEvent || !hasAlarm);
   burstControls.classList.toggle("hidden-app-chrome", !isEvent || !hasAlarm || !singleTime || !eventBurstEnabled.checked);
   document.querySelector("#burstToggleRow").classList.toggle("hidden-app-chrome", !isEvent || !hasAlarm || !singleTime);
+  if (snoozeIntervalControls) {
+    snoozeIntervalControls.style.display = customSnoozeChecked && isStandaloneAlarm ? "grid" : "none";
+  }
 
   const repeat = alarmRepeat.value;
   document.querySelector("#dayPicker").classList.toggle("hidden-app-chrome", !isEvent || !["Weekly", "Weekdays", "Weekends"].includes(repeat));
@@ -1142,6 +1411,13 @@ content.addEventListener("click", async (event) => {
     await refreshNotificationMessage();
     render();
   }
+  const clearCustomAudio = event.target.closest("[data-clear-custom-audio]");
+  if (clearCustomAudio) {
+    state.vault.settings.customAlarmTone = null;
+    state.notificationMessage = "Custom alarm tone cleared. Using built-in Alertly tone.";
+    saveVault();
+    render();
+  }
 });
 
 content.addEventListener("change", async (event) => {
@@ -1166,6 +1442,17 @@ content.addEventListener("change", async (event) => {
   }
   if (setting) {
     state.vault.settings[setting.dataset.setting] = setting.checked;
+    saveVault();
+    render();
+  }
+  const customAudioInput = event.target.closest("[data-custom-audio]");
+  if (customAudioInput && customAudioInput.files[0]) {
+    const file = customAudioInput.files[0];
+    state.vault.settings.customAlarmTone = {
+      name: file.name,
+      dataUrl: await fileToDataURL(file)
+    };
+    state.notificationMessage = `Custom alarm tone set: ${file.name}`;
     saveVault();
     render();
   }
@@ -1230,12 +1517,14 @@ deleteButton.addEventListener("click", deleteCurrentItem);
 form.addEventListener("submit", upsertItem);
 alarmTime.addEventListener("change", () => syncWheelFromTime(alarmTime.value));
 alarmTimePicker.addEventListener("change", () => syncWheelFromTime(alarmTimePicker.value));
+alarmSnoozeButton?.addEventListener("click", snoozeActiveAlarm);
+alarmDismissButton?.addEventListener("click", dismissActiveAlarm);
 document.querySelector(".time-step-row").addEventListener("click", (event) => {
   const button = event.target.closest("[data-time-step]");
   if (!button) return;
   stepAlarmTime(Number(button.dataset.timeStep));
 });
-[alarmType, eventHasAlarm, alarmRepeat, eventBurstEnabled].forEach((element) => element.addEventListener("change", updateDialogControls));
+[alarmType, eventHasAlarm, alarmRepeat, eventBurstEnabled, alarmCustomSnooze].filter(Boolean).forEach((element) => element.addEventListener("change", updateDialogControls));
 addEventTimeButton.addEventListener("click", addCurrentWheelTimeToEvent);
 eventTimeChips.addEventListener("click", (event) => {
   const removeButton = event.target.closest("[data-remove-event-time]");
@@ -1267,6 +1556,23 @@ ampmPicker.addEventListener("click", (event) => {
 });
 [hourWheel, minuteWheel].forEach((wheel) => {
   let snapTimer;
+  let isPointerActive = false;
+
+  wheel.addEventListener("pointerdown", () => {
+    isPointerActive = true;
+    clearTimeout(snapTimer);
+  });
+
+  wheel.addEventListener("pointerup", () => {
+    isPointerActive = false;
+    snapWheelFromScroll(wheel);
+  });
+
+  wheel.addEventListener("pointercancel", () => {
+    isPointerActive = false;
+    snapWheelFromScroll(wheel);
+  });
+
   wheel.addEventListener("click", (event) => {
     const step = event.target.closest("[data-wheel-step]");
     const option = event.target.closest("[data-wheel-value]");
@@ -1276,10 +1582,12 @@ ampmPicker.addEventListener("click", (event) => {
       paintWheelTime();
     }
   });
+
   wheel.addEventListener("scroll", () => {
     clearTimeout(snapTimer);
-    snapTimer = setTimeout(() => snapWheelFromScroll(wheel), 80);
+    snapTimer = setTimeout(() => snapWheelFromScroll(wheel), isPointerActive ? 120 : 80);
   });
+
   wheel.addEventListener("keydown", (event) => {
     if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
@@ -1301,6 +1609,7 @@ if ("Notification" in window && Notification.permission !== "denied") {
   Notification.requestPermission();
 }
 requestExactAlarmPermission();
+registerNativeNotificationActions();
 
 window.addEventListener("beforeunload", (e) => {
   if (items().some(itemHasRingingAlarm)) {
@@ -1316,6 +1625,12 @@ setInterval(() => {
     notifyOverdueItems();
   }
 }, 600000);
+
+setInterval(() => {
+  if (state.vault.session && account()) {
+    checkForAlarmTriggers();
+  }
+}, 5000);
 
 render();
 hideLaunchSplash();
